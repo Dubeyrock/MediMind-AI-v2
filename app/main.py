@@ -18,7 +18,7 @@ app=FastAPI(title='Medical Agent Educational API',version='1.0.0')
 app.add_middleware(CORSMiddleware,allow_origins=settings.allowed_origins.split(','),allow_credentials=False,allow_methods=['GET','POST','DELETE'],allow_headers=['Authorization','Content-Type'])
 app.mount('/static',StaticFiles(directory=ROOT/'static'),name='static')
 FRONTEND_DIST = ROOT / 'frontend' / 'dist'
-app.mount('/frontend',StaticFiles(directory=FRONTEND_DIST,check_dir=False),name='frontend')
+app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
 
 
 class ChatRequest(BaseModel):

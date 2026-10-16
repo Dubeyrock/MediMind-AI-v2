@@ -15,10 +15,10 @@ from app.agent import graph
 
 ROOT=Path(__file__).resolve().parent.parent
 app=FastAPI(title='Medical Agent Educational API',version='1.0.0')
-app.add_middleware(CORSMiddleware,allow_origins=settings.allowed_origins.split(','),allow_credentials=False,allow_methods=['GET','POST','DELETE'],allow_headers=['Authorization','Content-Type'])
+app.add_middleware(CORSMiddleware,allow_origins=[origin.strip() for origin in settings.allowed_origins.split(',') if origin.strip()],allow_credentials=False,allow_methods=['GET','POST','DELETE'],allow_headers=['Authorization','Content-Type'])
 app.mount('/static',StaticFiles(directory=ROOT/'static'),name='static')
 FRONTEND_DIST = ROOT / 'frontend' / 'dist'
-app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+app.mount('/frontend',StaticFiles(directory=FRONTEND_DIST,check_dir=False),name='frontend')
 
 
 class ChatRequest(BaseModel):

@@ -1,5 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
+async function readApiResponse(response) {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    const detail = text.trim().slice(0, 200);
+    throw new Error(detail || `Server returned an invalid response (HTTP ${response.status}).`);
+  }
+}
+
 const initialMessage = {
   id: 'welcome',
   role: 'assistant',
@@ -416,9 +433,9 @@ export default function App() {
     let active = true;
     const checkHealth = async () => {
       try {
-        const response = await fetch('/api/health');
+        const response = await fetch(apiUrl('/api/health'));
         if (!response.ok) throw new Error('Health check failed');
-        const data = await response.json();
+        const data = await readApiResponse(response);
         if (active) {
           setStatus(data.configured
             ? { label: 'Services ready', kind: 'ready' }
@@ -503,7 +520,7 @@ export default function App() {
         'Content-Type': 'application/json',
       };
       if (conversationIdRef.current) headers['X-Conversation-ID'] = conversationIdRef.current;
-      const response = await fetch('/api/chat', {
+      const response = await fetch(apiUrl('/api/chat'), {
         method: 'POST',
         headers,
         signal: requestController.signal,
@@ -513,7 +530,7 @@ export default function App() {
           image_data: submittedImage || null,
         }),
       });
-      const data = await response.json();
+      const data = await readApiResponse(response);
       if (!response.ok) throw new Error(data.detail || 'The request could not be completed.');
       conversationIdRef.current = data.conversation_id || conversationIdRef.current;
       const updatedHistory = [
@@ -596,12 +613,12 @@ export default function App() {
     setDeletingConversationId(conversation.id);
     let serverDeleteError = '';
     try {
-      const response = await fetch(`/api/conversations/${encodeURIComponent(conversation.id)}`, {
+      const response = await fetch(apiUrl(`/api/conversations/${encodeURIComponent(conversation.id)}`), {
         method: 'DELETE',
         headers: authHeaders(),
       });
       if (!response.ok) {
-        const data = await response.json();
+        const data = await readApiResponse(response);
         throw new Error(data.detail || 'The server could not delete this conversation.');
       }
     } catch (error) {
@@ -640,12 +657,12 @@ export default function App() {
         try {
           const formData = new FormData();
           formData.append('file', new Blob(chunks, { type: recorder.mimeType }), 'voice.webm');
-          const response = await fetch('/api/transcribe', {
+          const response = await fetch(apiUrl('/api/transcribe'), {
             method: 'POST',
             headers: authHeaders(),
             body: formData,
           });
-          const data = await response.json();
+          const data = await readApiResponse(response);
           if (!response.ok) throw new Error(data.detail || 'Transcription failed.');
           setMessage((current) => [current, data.text].filter(Boolean).join(' '));
         } catch (error) {
@@ -738,7 +755,7 @@ export default function App() {
     setSpeaking(true);
     setNotice('');
     try {
-      const response = await fetch('/api/speak', {
+      const response = await fetch(apiUrl('/api/speak'), {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         signal: requestController.signal,
@@ -749,7 +766,7 @@ export default function App() {
         }),
       });
       if (!response.ok) {
-        const error = await response.json();
+        const error = await readApiResponse(response);
         throw new Error(error.detail || 'Speech playback is unavailable.');
       }
       const audioBlob = await response.blob();

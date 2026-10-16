@@ -1,5 +1,5 @@
-<<<<<<< HEAD
-# 1. MediMind AI — LangGraph + Pinecone + FastAPI
+
+## 1. MediMind AI — LangGraph + Pinecone + FastAPI
 
 An educational medical assistant with Groq-hosted open-weight LLMs, local open-source embeddings, retrieval from the bundled historical Gale Encyclopedia of Medicine (2002, Volume 1 A–B), optional Tavily fallback, image observations, speech input/output, and a React web UI.
 
@@ -72,5 +72,4 @@ This project is a functional tutorial scaffold, not a production medical device.
 
 The historical book may contain obsolete clinical advice; model instructions do not guarantee safety. Images can be described but cannot confirm or rule out disease. This software does not make diagnoses.
 =======
-"# MediMind-AI" 
->>>>>>> 112c836d792eb21372290ecc053b0b085af7d163
+

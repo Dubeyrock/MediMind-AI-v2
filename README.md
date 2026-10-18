@@ -1,5 +1,7 @@
 
-## 1. MediMind AI — LangGraph + Pinecone + FastAPI
+## 1. MediMind AI — LangGraph + Pinecone + FastAPI  - live ( https://medi-mind-ai-v2-oqy3.vercel.app/)
+
+
 
 An educational medical assistant with Groq-hosted open-weight LLMs, local open-source embeddings, retrieval from the bundled historical Gale Encyclopedia of Medicine (2002, Volume 1 A–B), optional Tavily fallback, image observations, speech input/output, and a React web UI.
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const avatarUrl = (filename) => `${import.meta.env.BASE_URL}avatars/${filename}`;
 
 function apiUrl(path) {
   return `${API_BASE_URL}${path}`;
@@ -155,11 +156,13 @@ function Icon({ name, size = 18 }) {
   );
 }
 
-function Message({ message, assistantName }) {
+function Message({ message, assistantName, speechGender }) {
   return (
     <article className={`message message--${message.role}`}>
       {message.role === 'assistant' && (
-        <div className="message__avatar" aria-hidden="true">✚</div>
+        <div className="message__avatar" aria-hidden="true">
+          <img src={avatarUrl(speechGender === 'female' ? 'medguide-asha.png' : 'medguide-arjun.png')} alt="" />
+        </div>
       )}
       <div className="message__body">
         <div className="message__label">
@@ -368,7 +371,9 @@ function LandingPage({ status, onStart, theme, onToggleTheme }) {
         </div>
         <div className="feature-grid">
           <article className="feature-card assistant-card">
-            <div className="assistant-card__avatar assistant-card__avatar--asha" aria-hidden="true">A</div>
+            <div className="assistant-card__portrait">
+              <img className="assistant-card__avatar assistant-card__avatar--asha" src={avatarUrl('medguide-asha.png')} alt="MedGuide Asha, female AI assistant" />
+            </div>
             <span className="feature-card__number">FEMALE VOICE</span>
             <h3>MedGuide Asha</h3>
             <p>A friendly female voice for listening to spoken answers. Choose Asha to open the chat with her voice selected.</p>
@@ -377,7 +382,9 @@ function LandingPage({ status, onStart, theme, onToggleTheme }) {
             </button>
           </article>
           <article className="feature-card assistant-card">
-            <div className="assistant-card__avatar assistant-card__avatar--arjun" aria-hidden="true">A</div>
+            <div className="assistant-card__portrait">
+              <img className="assistant-card__avatar assistant-card__avatar--arjun" src={avatarUrl('medguide-arjun.png')} alt="MedGuide Arjun, male AI assistant" />
+            </div>
             <span className="feature-card__number">MALE VOICE</span>
             <h3>MedGuide Arjun</h3>
             <p>A friendly male voice for listening to spoken answers. Choose Arjun to open the chat with his voice selected.</p>
@@ -739,4 +746,457 @@ export default function App() {
   const openCamera = async () => {
     try {
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera access is not supported.');
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { f
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      cameraStreamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setCameraOpen(true);
+      setNotice('');
+    } catch (error) {
+      setNotice(`Camera unavailable: ${error.message}`);
+    }
+  };
+
+  const closeCamera = () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setCameraOpen(false);
+  };
+
+  const captureImage = () => {
+    const video = videoRef.current;
+    if (!video?.videoWidth) {
+      setNotice('The camera is not ready yet. Please wait and try again.');
+      return;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    canvas.toBlob((blob) => {
+      if (blob) loadImage(new File([blob], 'camera.jpg', { type: 'image/jpeg' }));
+      else setNotice('The camera image could not be captured.');
+    }, 'image/jpeg', 0.85);
+    closeCamera();
+  };
+
+  const stopAudio = () => {
+    speechRequestControllerRef.current?.abort();
+    speechRequestControllerRef.current = null;
+    if (audioRef.current) {
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = '';
+    setSpeaking(false);
+    setNotice('Audio stopped.');
+  };
+
+  const readAnswer = async () => {
+    if (!lastAnswer) {
+      setNotice('Ask a question first to hear an answer.');
+      return;
+    }
+    const cleanAnswer = cleanAssistantText(lastAnswer);
+    if (cleanAnswer.length > 2500) {
+      setNotice('This answer is too long for one voice request. Ask for a shorter answer, then try Listen again.');
+      return;
+    }
+    const detectedLanguage = speechLanguage === 'auto'
+      ? detectSpeechLanguage(cleanAnswer)
+      : speechLanguage;
+    const language = speechLanguages.find((item) => item.value === detectedLanguage) || speechLanguages[1];
+    const requestController = new AbortController();
+    speechRequestControllerRef.current = requestController;
+    setSpeaking(true);
+    setNotice('');
+    try {
+      const response = await fetch(apiUrl('/api/speak'), {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        signal: requestController.signal,
+        body: JSON.stringify({
+          text: cleanAnswer,
+          language_code: language.locale,
+          voice_gender: speechGender,
+        }),
+      });
+      if (!response.ok) {
+        const error = await readApiResponse(response);
+        throw new Error(error.detail || 'Speech playback is unavailable.');
+      }
+      if (requestController.signal.aborted) return;
+      const contentType = response.headers.get('content-type') || '';
+      const supportsStreaming = typeof MediaSource !== 'undefined'
+        && MediaSource.isTypeSupported(contentType);
+      const mediaSource = supportsStreaming ? new MediaSource() : null;
+      const audioSource = mediaSource || await response.blob();
+      const audioUrl = URL.createObjectURL(audioSource);
+      audioUrlRef.current = audioUrl;
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      audio.onended = () => {
+        if (audioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          audioUrlRef.current = '';
+        }
+        if (audioRef.current === audio) audioRef.current = null;
+        setSpeaking(false);
+      };
+      audio.onerror = () => {
+        if (audioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          audioUrlRef.current = '';
+        }
+        if (audioRef.current === audio) audioRef.current = null;
+        setSpeaking(false);
+        setNotice('The generated audio could not be played. Please try again.');
+      };
+      if (supportsStreaming) {
+        await new Promise((resolve, reject) => {
+          mediaSource.addEventListener('sourceopen', resolve, { once: true });
+          mediaSource.addEventListener('error', () => reject(new Error('Audio streaming is unavailable.')), { once: true });
+        });
+        if (requestController.signal.aborted) return;
+
+        const sourceBuffer = mediaSource.addSourceBuffer(contentType);
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('This browser cannot receive streamed audio.');
+        const pendingChunks = [];
+        let streamFinished = false;
+        let playbackStartedFlag = false;
+        let resolvePlayback;
+        let rejectPlayback;
+        const playbackStarted = new Promise((resolve, reject) => {
+          resolvePlayback = resolve;
+          rejectPlayback = reject;
+        });
+        playbackStarted.catch(() => {});
+
+        const appendNextChunk = () => {
+          if (sourceBuffer.updating) return;
+          if (pendingChunks.length) {
+            try {
+              sourceBuffer.appendBuffer(pendingChunks.shift());
+            } catch (error) {
+              rejectPlayback(error);
+            }
+          } else if (streamFinished && mediaSource.readyState === 'open') {
+            mediaSource.endOfStream();
+          }
+        };
+        sourceBuffer.addEventListener('updateend', () => {
+          if (!playbackStartedFlag && audio.buffered.length) {
+            playbackStartedFlag = true;
+            audio.play().then(resolvePlayback).catch(rejectPlayback);
+          }
+          appendNextChunk();
+        });
+
+        let receivedAudio = false;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            receivedAudio = true;
+            pendingChunks.push(value);
+            appendNextChunk();
+            if (!playbackStartedFlag) await playbackStarted;
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        if (!receivedAudio) throw new Error('Speech service returned no audio.');
+        streamFinished = true;
+        appendNextChunk();
+      } else {
+        await audio.play();
+      }
+      if (speechRequestControllerRef.current === requestController) {
+        speechRequestControllerRef.current = null;
+      }
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      audioRef.current?.pause();
+      audioRef.current = null;
+      if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = '';
+      setSpeaking(false);
+      setNotice(error.message);
+    } finally {
+      if (speechRequestControllerRef.current === requestController) {
+        speechRequestControllerRef.current = null;
+      }
+    }
+  };
+
+  if (!showChat) {
+    return <LandingPage status={status} onStart={startChat} theme={theme} onToggleTheme={toggleTheme} />;
+  }
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <button className="brand brand--button" type="button" onClick={() => setShowChat(false)} aria-label="Back to MedGuide home">
+          <span className="brand__mark">✚</span>
+          <span className="brand__text">MedGuide<span>.ai</span></span>
+        </button>
+        <div className="topbar__actions">
+          <div className={`connection connection--${status.kind}`}>
+            <span className="connection__dot" />
+            {status.label}
+          </div>
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        </div>
+      </header>
+
+      <div className="workspace">
+        <aside className="sidebar">
+          <div className="sidebar__intro">
+            <div className="eyebrow"><Icon name="spark" size={14} /> YOUR HEALTH COMPANION</div>
+            <h1>Better questions.<br /><span>Clearer answers.</span></h1>
+            <p>A thoughtful place to explore health information and prepare for conversations with your care team.</p>
+          </div>
+
+          <div className="side-card">
+            <div className="side-card__icon"><Icon name="book" size={19} /></div>
+            <div><strong>Knowledge grounded</strong><p>Answers can draw on the medical reference and web research.</p></div>
+          </div>
+          <div className="side-card">
+            <div className="side-card__icon side-card__icon--mint"><Icon name="shield" size={19} /></div>
+            <div><strong>Made for learning</strong><p>Use this to understand topics, not to replace professional care.</p></div>
+          </div>
+
+          <section className="history-panel" aria-label="Saved conversations">
+            <div className="history-panel__heading">
+              <div><strong>Past chats</strong><span>{savedConversations.length ? `${savedConversations.length} saved` : 'Saved on this browser'}</span></div>
+              <button
+                type="button"
+                className="history-panel__new"
+                onClick={startNewConversation}
+                disabled={sending || Boolean(deletingConversationId)}
+              >
+                <Icon name="plus" size={14} /> New
+              </button>
+            </div>
+            {savedConversations.length === 0 ? (
+              <p className="history-panel__empty">Your completed conversations will appear here.</p>
+            ) : (
+              <div className="history-list">
+                {savedConversations.map((conversation) => (
+                  <div
+                    className={`history-item${conversationIdRef.current === conversation.id ? ' history-item--active' : ''}`}
+                    key={conversation.id}
+                  >
+                    <button
+                      type="button"
+                      className="history-item__open"
+                      onClick={() => openSavedConversation(conversation)}
+                      title={conversation.title}
+                      disabled={sending || Boolean(deletingConversationId)}
+                    >
+                      <span>{conversation.title}</span>
+                      <time dateTime={new Date(conversation.updatedAt).toISOString()}>
+                        {new Date(conversation.updatedAt).toLocaleDateString()}
+                      </time>
+                    </button>
+                    <button
+                      type="button"
+                      className="history-item__delete"
+                      aria-label={`Delete conversation: ${conversation.title}`}
+                      title="Delete conversation"
+                      disabled={sending || Boolean(deletingConversationId)}
+                      onClick={() => deleteSavedConversation(conversation)}
+                    >
+                      <Icon name="trash" size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="history-panel__privacy">Stored only in this browser, not encrypted or synced. Attached images are not saved.</p>
+          </section>
+
+          <div className="sidebar__safety">
+            <span className="sidebar__safety-icon"><Icon name="shield" size={16} /></span>
+            <div><strong>A note on safety</strong><p>If someone may be in immediate danger, contact local emergency services now.</p></div>
+          </div>
+          <div className="sidebar__footer">PRIVATE SESSION <span>·</span> EDUCATIONAL USE</div>
+        </aside>
+
+        <section className="chat-panel" aria-label="Medical education chat">
+          <div className="chat-panel__header">
+            <div className="assistant-identity">
+              <div className="assistant-identity__avatar" aria-hidden="true">
+                <img src={avatarUrl(speechGender === 'female' ? 'medguide-asha.png' : 'medguide-arjun.png')} alt="" />
+              </div>
+              <div><strong>{assistantName}</strong><span><i /> {speechGender === 'female' ? 'Female' : 'Male'} voice · Here to help you learn</span></div>
+            </div>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Start a new conversation"
+              title="Start a new conversation"
+              disabled={sending || Boolean(deletingConversationId)}
+              onClick={startNewConversation}
+            >
+              <Icon name="plus" size={19} />
+            </button>
+          </div>
+
+          <div className="conversation" aria-live="polite">
+            {messages.length === 1 && (
+              <div className="welcome">
+                <div className="welcome__spark"><Icon name="spark" size={21} /></div>
+                <h2>What’s on your mind?</h2>
+                <p>Ask a health question, explore a topic, or share an image to discuss what’s visible.</p>
+                <div className="suggestions">
+                  <span>TRY ASKING</span>
+                  {suggestedQuestions.map((question) => (
+                    <button type="button" key={question} onClick={() => setMessage(question)}>
+                      {question}<Icon name="arrow" size={14} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {messages.map((item) => <Message key={item.id} message={item} assistantName={assistantName} speechGender={speechGender} />)}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {cameraOpen && (
+            <div className="camera-preview">
+              <video ref={videoRef} autoPlay playsInline aria-label="Camera preview" />
+              <div className="camera-preview__actions">
+                <button type="button" className="button button--quiet" onClick={closeCamera}>Cancel</button>
+                <button type="button" className="button button--dark" onClick={captureImage}>Capture photo</button>
+              </div>
+            </div>
+          )}
+
+          {imageData && (
+            <div className="attachment-preview">
+              <img src={imageData} alt="Selected attachment preview" />
+              <span>Image attached</span>
+              <button
+                type="button"
+                aria-label="Remove image"
+                onClick={() => {
+                  setImageData('');
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }}
+              >
+                <Icon name="close" size={15} />
+              </button>
+            </div>
+          )}
+
+          <form className="composer" onSubmit={sendMessage}>
+            {notice && <div className="notice" role="alert">{notice}</div>}
+            <label className="sr-only" htmlFor="question">Your health question</label>
+            <textarea
+              id="question"
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  sendMessage(event);
+                }
+              }}
+              placeholder="Ask a question about your health..."
+              rows={2}
+              maxLength={4000}
+              disabled={sending}
+            />
+            <div className="composer__bottom">
+              <div className="composer__tools">
+                <input
+                  ref={fileInputRef}
+                  id="image-upload"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  hidden
+                  onChange={(event) => loadImage(event.target.files?.[0])}
+                />
+                <button className="tool-button" type="button" onClick={() => fileInputRef.current?.click()}>
+                  <Icon name="paperclip" size={16} /><span>Attach image</span>
+                </button>
+                <button className="tool-button" type="button" onClick={openCamera}>
+                  <Icon name="camera" size={16} /><span>Camera</span>
+                </button>
+                <button className={`tool-button${recording ? ' tool-button--recording' : ''}`} type="button" onClick={toggleRecording} disabled={transcribing}>
+                  <Icon name="mic" size={16} /><span>{recording ? 'Stop recording' : transcribing ? 'Transcribing…' : 'Voice'}</span>
+                </button>
+                <button
+                  className={`tool-button tool-button--listen${speaking ? ' tool-button--stop' : ''}`}
+                  type="button"
+                  aria-label={speaking ? 'Stop audio' : 'Listen to answer'}
+                  title={speaking ? 'Stop audio playback' : 'Read the answer aloud'}
+                  onClick={speaking ? stopAudio : readAnswer}
+                >
+                  <Icon name={speaking ? 'stop' : 'volume'} size={16} />
+                  <span>{speaking ? 'Stop audio' : 'Listen'}</span>
+                </button>
+                <label className="sr-only" htmlFor="speech-language">Spoken answer language</label>
+                <select
+                  id="speech-language"
+                  className="voice-select"
+                  value={speechLanguage}
+                  onChange={(event) => setSpeechLanguage(event.target.value)}
+                  title="Choose the spoken answer language. Answers in another language are translated for audio."
+                >
+                  {speechLanguages.map((language) => (
+                    <option key={language.value} value={language.value}>{language.label}</option>
+                  ))}
+                </select>
+                <label className="sr-only" htmlFor="speech-gender">Assistant voice</label>
+                <select
+                  id="speech-gender"
+                  className="voice-select voice-select--gender"
+                  value={speechGender}
+                  onChange={(event) => setSpeechGender(event.target.value)}
+                  title="Choose a female or male assistant voice"
+                >
+                  <option value="female">Female voice</option>
+                  <option value="male">Male voice</option>
+                </select>
+              </div>
+              {sending ? (
+                <button
+                  className="send-button send-button--stop"
+                  type="button"
+                  aria-label="Stop response"
+                  onClick={stopResponse}
+                >
+                  Stop <Icon name="stop" size={14} />
+                </button>
+              ) : (
+                <button className="send-button" type="submit" disabled={Boolean(deletingConversationId) || !message.trim()}>
+                  Send <Icon name="send" size={15} />
+                </button>
+              )}
+            </div>
+            <div className="composer__hint">AI can make mistakes. Please verify important information with a qualified professional.</div>
+          </form>
+
+          <details className="api-access">
+            <summary>API access <span>Optional token</span></summary>
+            <label htmlFor="api-token">API token</label>
+            <input
+              id="api-token"
+              type="password"
+              autoComplete="off"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              placeholder="Enter API_TOKEN if configured"
+            />
+          </details>
+        </section>
+      </div>
+      <footer className="page-footer">MedGuide AI is for educational purposes only and does not provide diagnoses or treatment.</footer>
+    </main>
+  );
+}

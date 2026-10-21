@@ -4,7 +4,7 @@ import secrets
 from pathlib import Path
 from typing import Literal
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -284,12 +284,49 @@ def speak(payload:SpeechRequest,authorization:str|None=Header(default=None)):
         speaker = language_speakers[payload.voice_gender]
         if model == 'bulbul:v4-flash' and payload.language_code == 'ta-IN' and payload.voice_gender == 'female':
             model = 'bulbul:v3'
+    speech_text = translate_speech_text(payload.text, payload.language_code)
+    if model == 'bulbul:v4-flash':
+        client = httpx.Client(timeout=60)
+        try:
+            request = client.build_request(
+                'POST',
+                'https://api.sarvam.ai/text-to-speech/stream',
+                headers={'api-subscription-key': settings.sarvam_api_key},
+                json={
+                    'text': speech_text,
+                    'model': model,
+                    'language_code': payload.language_code,
+                    'speaker': speaker,
+                    'speech_sample_rate': 24000,
+                    'output_audio_codec': 'mp3',
+                    'enable_preprocessing': True,
+                },
+            )
+            upstream = client.send(request, stream=True)
+            upstream.raise_for_status()
+        except httpx.HTTPError as exc:
+            client.close()
+            print('Sarvam streaming speech error:',repr(exc),flush=True)
+            raise HTTPException(502,'Streaming speech synthesis unavailable. Check Sarvam API access and try again.')
+
+        def audio_chunks():
+            try:
+                yield from upstream.iter_bytes()
+            except httpx.HTTPError as exc:
+                print('Sarvam streaming audio error:',repr(exc),flush=True)
+                raise
+            finally:
+                upstream.close()
+                client.close()
+
+        return StreamingResponse(audio_chunks(), media_type='audio/mpeg')
+
     try:
         response = httpx.post(
             'https://api.sarvam.ai/text-to-speech',
             headers={'api-subscription-key': settings.sarvam_api_key},
             json={
-                'text': translate_speech_text(payload.text, payload.language_code),
+                'text': speech_text,
                 'model': model,
                 'language_code': payload.language_code,
                 'speaker': speaker,

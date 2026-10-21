@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     pinecone_api_key: str = ''
     tavily_api_key: str = ''
     pinecone_index: str = 'medical-agent-groq'
-    groq_chat_model: str = 'openai/gpt-oss-120b'          # <-- badla
-    groq_vision_model: str = 'qwen/qwen3.6-27b'            # <-- badla
+    groq_chat_model: str = 'openai/gpt-oss-120b'
+    groq_vision_model: str = 'qwen/qwen3.6-27b'
     groq_transcription_model: str = 'whisper-large-v3-turbo'
     sarvam_api_key: str = ''
     sarvam_chat_model: str = 'sarvam-105b-conversations'

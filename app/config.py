@@ -14,14 +14,13 @@ load_dotenv()
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-
 class Settings(BaseSettings):
     groq_api_key: str = ''
     pinecone_api_key: str = ''
     tavily_api_key: str = ''
     pinecone_index: str = 'medical-agent-groq'
-    groq_chat_model: str = 'llama-3.3-70b-versatile'
-    groq_vision_model: str = 'meta-llama/llama-4-scout-17b-16e-instruct'
+    groq_chat_model: str = 'openai/gpt-oss-120b'          # <-- badla
+    groq_vision_model: str = 'qwen/qwen3.6-27b'            # <-- badla
     groq_transcription_model: str = 'whisper-large-v3-turbo'
     sarvam_api_key: str = ''
     sarvam_chat_model: str = 'sarvam-105b-conversations'

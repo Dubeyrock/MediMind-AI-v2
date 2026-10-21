@@ -1018,7 +1018,7 @@ export default function App() {
                   className="voice-select"
                   value={speechLanguage}
                   onChange={(event) => setSpeechLanguage(event.target.value)}
-                  title="Select the language for read-aloud answers"
+                  title="Choose the spoken answer language. Answers in another language are translated for audio."
                 >
                   {speechLanguages.map((language) => (
                     <option key={language.value} value={language.value}>{language.label}</option>

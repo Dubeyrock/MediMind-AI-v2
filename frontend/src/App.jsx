@@ -769,25 +769,93 @@ export default function App() {
         const error = await readApiResponse(response);
         throw new Error(error.detail || 'Speech playback is unavailable.');
       }
-      const audioBlob = await response.blob();
       if (requestController.signal.aborted) return;
-      audioUrlRef.current = URL.createObjectURL(audioBlob);
-      const audio = new Audio(audioUrlRef.current);
+      const contentType = response.headers.get('content-type') || '';
+      const supportsStreaming = typeof MediaSource !== 'undefined'
+        && MediaSource.isTypeSupported(contentType);
+      const mediaSource = supportsStreaming ? new MediaSource() : null;
+      const audioSource = mediaSource || await response.blob();
+      const audioUrl = URL.createObjectURL(audioSource);
+      audioUrlRef.current = audioUrl;
+      const audio = new Audio(audioUrl);
       audioRef.current = audio;
       audio.onended = () => {
-        URL.revokeObjectURL(audioUrlRef.current);
-        audioUrlRef.current = '';
-        audioRef.current = null;
+        if (audioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          audioUrlRef.current = '';
+        }
+        if (audioRef.current === audio) audioRef.current = null;
         setSpeaking(false);
       };
       audio.onerror = () => {
-        URL.revokeObjectURL(audioUrlRef.current);
-        audioUrlRef.current = '';
-        audioRef.current = null;
+        if (audioUrlRef.current === audioUrl) {
+          URL.revokeObjectURL(audioUrl);
+          audioUrlRef.current = '';
+        }
+        if (audioRef.current === audio) audioRef.current = null;
         setSpeaking(false);
         setNotice('The generated audio could not be played. Please try again.');
       };
-      await audio.play();
+      if (supportsStreaming) {
+        await new Promise((resolve, reject) => {
+          mediaSource.addEventListener('sourceopen', resolve, { once: true });
+          mediaSource.addEventListener('error', () => reject(new Error('Audio streaming is unavailable.')), { once: true });
+        });
+        if (requestController.signal.aborted) return;
+
+        const sourceBuffer = mediaSource.addSourceBuffer(contentType);
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('This browser cannot receive streamed audio.');
+        const pendingChunks = [];
+        let streamFinished = false;
+        let playbackStartedFlag = false;
+        let resolvePlayback;
+        let rejectPlayback;
+        const playbackStarted = new Promise((resolve, reject) => {
+          resolvePlayback = resolve;
+          rejectPlayback = reject;
+        });
+        playbackStarted.catch(() => {});
+
+        const appendNextChunk = () => {
+          if (sourceBuffer.updating) return;
+          if (pendingChunks.length) {
+            try {
+              sourceBuffer.appendBuffer(pendingChunks.shift());
+            } catch (error) {
+              rejectPlayback(error);
+            }
+          } else if (streamFinished && mediaSource.readyState === 'open') {
+            mediaSource.endOfStream();
+          }
+        };
+        sourceBuffer.addEventListener('updateend', () => {
+          if (!playbackStartedFlag && audio.buffered.length) {
+            playbackStartedFlag = true;
+            audio.play().then(resolvePlayback).catch(rejectPlayback);
+          }
+          appendNextChunk();
+        });
+
+        let receivedAudio = false;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            receivedAudio = true;
+            pendingChunks.push(value);
+            appendNextChunk();
+            if (!playbackStartedFlag) await playbackStarted;
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        if (!receivedAudio) throw new Error('Speech service returned no audio.');
+        streamFinished = true;
+        appendNextChunk();
+      } else {
+        await audio.play();
+      }
       if (speechRequestControllerRef.current === requestController) {
         speechRequestControllerRef.current = null;
       }

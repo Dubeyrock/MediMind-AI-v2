@@ -1,4 +1,5 @@
 import base64
+import re
 import secrets
 from pathlib import Path
 from typing import Literal
@@ -43,6 +44,74 @@ TTS_SPEAKERS = {
     'ta-IN': {'female': 'ishita', 'male': 'gokul_ta_narration'},
     'te-IN': {'female': 'kavitha_te_conversation', 'male': 'tarun_te_narration'},
 }
+
+TTS_LANGUAGE_NAMES = {
+    'en-IN': 'English',
+    'hi-IN': 'Hindi',
+    'bn-IN': 'Bengali',
+    'gu-IN': 'Gujarati',
+    'kn-IN': 'Kannada',
+    'mr-IN': 'Marathi',
+    'pa-IN': 'Punjabi',
+    'ta-IN': 'Tamil',
+    'te-IN': 'Telugu',
+}
+
+TTS_LANGUAGE_SCRIPTS = {
+    'en-IN': re.compile(r'[A-Za-z]'),
+    'hi-IN': re.compile(r'[\u0900-\u097f]'),
+    'bn-IN': re.compile(r'[\u0980-\u09ff]'),
+    'gu-IN': re.compile(r'[\u0a80-\u0aff]'),
+    'kn-IN': re.compile(r'[\u0c80-\u0cff]'),
+    'mr-IN': re.compile(r'[\u0900-\u097f]'),
+    'pa-IN': re.compile(r'[\u0a00-\u0a7f]'),
+    'ta-IN': re.compile(r'[\u0b80-\u0bff]'),
+    'te-IN': re.compile(r'[\u0c00-\u0c7f]'),
+}
+
+
+def translate_speech_text(text: str, language_code: str) -> str:
+    if TTS_LANGUAGE_SCRIPTS[language_code].search(text):
+        return text
+
+    language_name = TTS_LANGUAGE_NAMES[language_code]
+    response = httpx.post(
+        'https://api.sarvam.ai/v1/chat/completions',
+        headers={'api-subscription-key': settings.sarvam_api_key},
+        json={
+            'model': settings.sarvam_chat_model,
+            'temperature': 0.1,
+            'max_tokens': 1600,
+            'messages': [
+                {
+                    'role': 'system',
+                    'content': (
+                        f'Translate the user text faithfully into {language_name} for spoken audio. '
+                        'Preserve its medical meaning, uncertainty, names, numbers, and references. '
+                        'Do not add, omit, explain, answer, or summarize anything. Return only the translation.'
+                    ),
+                },
+                {'role': 'user', 'content': text},
+            ],
+        },
+        timeout=45,
+    )
+    response.raise_for_status()
+    try:
+        response_data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, 'Speech translation returned an invalid response.') from exc
+    choices = response_data.get('choices') if isinstance(response_data, dict) else None
+    first_choice = choices[0] if isinstance(choices, list) and choices else None
+    message = first_choice.get('message') if isinstance(first_choice, dict) else None
+    translated_text = message.get('content') if isinstance(message, dict) else None
+    if not isinstance(translated_text, str) or not translated_text.strip():
+        raise HTTPException(502, 'Speech translation returned an invalid response.')
+    translated_text = translated_text.strip()
+    if len(translated_text) > 2500:
+        raise HTTPException(413, 'Translated speech is too long. Choose a shorter answer and try again.')
+    return translated_text
+
 
 def auth(authorization: str | None):
     if settings.api_token and not secrets.compare_digest(authorization or '',f'Bearer {settings.api_token}'):
@@ -203,7 +272,7 @@ def speak(payload:SpeechRequest,authorization:str|None=Header(default=None)):
             'https://api.sarvam.ai/text-to-speech',
             headers={'api-subscription-key': settings.sarvam_api_key},
             json={
-                'text': payload.text,
+                'text': translate_speech_text(payload.text, payload.language_code),
                 'model': model,
                 'language_code': payload.language_code,
                 'speaker': speaker,
@@ -217,8 +286,8 @@ def speak(payload:SpeechRequest,authorization:str|None=Header(default=None)):
         audio = base64.b64decode(''.join(encoded_audio), validate=True)
         return Response(content=audio, media_type='audio/wav')
     except httpx.HTTPError as exc:
-        print('Sarvam speech error:',repr(exc),flush=True)
-        raise HTTPException(502,'Multilingual speech synthesis unavailable. Check Sarvam API access and try again.')
+        print('Sarvam speech translation/synthesis error:',repr(exc),flush=True)
+        raise HTTPException(502,'Multilingual speech translation or synthesis unavailable. Check Sarvam API access and try again.')
     except (KeyError, ValueError) as exc:
         print('Invalid Sarvam speech response:',repr(exc),flush=True)
         raise HTTPException(502,'Speech synthesis returned invalid audio data.')

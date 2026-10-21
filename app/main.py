@@ -219,13 +219,19 @@ async def transcribe(file:UploadFile=File(...),authorization:str|None=Header(def
     data=await file.read(10_000_001)
     if len(data)>10_000_000:
         raise HTTPException(413,'Audio exceeds 10 MB')
+    if not data:
+        raise HTTPException(400,'No audio was recorded. Hold Voice while speaking, then stop recording.')
+    content_type = (file.content_type or 'audio/webm').split(';', 1)[0].strip().lower()
     if settings.sarvam_api_key:
         try:
+            form_data = {'model': settings.sarvam_stt_model}
+            if settings.sarvam_stt_model == 'saaras:v3':
+                form_data['mode'] = 'transcribe'
             response = httpx.post(
                 'https://api.sarvam.ai/speech-to-text',
                 headers={'api-subscription-key': settings.sarvam_api_key},
-                data={'model': settings.sarvam_stt_model, 'mode': 'transcribe'},
-                files={'file': (file.filename or 'voice.webm', data, file.content_type or 'audio/webm')},
+                data=form_data,
+                files={'file': (file.filename or 'voice.webm', data, content_type)},
                 timeout=60,
             )
             response.raise_for_status()
@@ -233,6 +239,17 @@ async def transcribe(file:UploadFile=File(...),authorization:str|None=Header(def
             if not isinstance(transcript, str):
                 raise HTTPException(502, 'Speech transcription returned an invalid response.')
             return {'text': transcript}
+        except httpx.HTTPStatusError as exc:
+            print(
+                'Sarvam transcription error:',
+                exc.response.status_code,
+                exc.response.text[:1000],
+                flush=True,
+            )
+            raise HTTPException(
+                502,
+                f'Sarvam rejected the audio request (HTTP {exc.response.status_code}). Check backend logs for details.',
+            )
         except httpx.HTTPError as exc:
             print('Sarvam transcription error:',repr(exc),flush=True)
             raise HTTPException(502,'Regional speech transcription unavailable. Check Sarvam API access and try again.')

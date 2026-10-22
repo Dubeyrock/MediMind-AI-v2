@@ -7,7 +7,7 @@ An educational medical assistant with Groq-hosted open-weight LLMs, local open-s
 
 ## Requirements
 Python 3.11 or 3.12; Pinecone API key; internet connection. Sarvam API key enables multilingual chat, speech synthesis and transcription; Groq API key is used for image observations and provides a chat/transcription fallback. Tavily is optional. Embeddings run locally with `sentence-transformers/all-MiniLM-L6-v2`. This is a tutorial reference implementation, **not** a clinically validated diagnostic system or HIPAA-compliant deployment.
-
+.
 ## Start
 ```bash
 conda create -n project python=3.11 -y
